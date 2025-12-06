@@ -1,3 +1,21 @@
+(******************************************************************************)
+(*                                                                            *)
+(*            Ramsey R(3,3) = 6: A Complete Formalization in Coq              *)
+(*                                                                            *)
+(*     Computational verification that every 2-coloring of K6 contains a      *)
+(*     monochromatic triangle, while K5 admits a triangle-free coloring.      *)
+(*     All 32768 colorings checked; bridging lemmas complete the proof.       *)
+(*                                                                            *)
+(*     "Suppose aliens invade and threaten to obliterate Earth unless we      *)
+(*      tell them R(5,5). We should marshal all computers and attempt it.     *)
+(*      If they ask for R(6,6), we should attempt to destroy the aliens."     *)
+(*     - Paul Erdos                                                           *)
+(*                                                                            *)
+(*     Author: Charles C. Norton                                              *)
+(*     Date: December 6, 2025                                                 *)
+(*                                                                            *)
+(******************************************************************************)
+
 Require Import Bool.
 Require Import Arith.
 Require Import List.
