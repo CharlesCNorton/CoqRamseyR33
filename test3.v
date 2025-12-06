@@ -225,6 +225,33 @@ Definition nat_to_coloring (n : nat) : coloring :=
 Definition coloring_has_mono_triangle (n : nat) : bool :=
   has_monochromatic_triangle (complete_graph 6) (nat_to_coloring n).
 
+(* Convert a color to a bit *)
+Definition color_to_bit (col : color) : nat :=
+  match col with
+  | Red => 0
+  | Blue => 1
+  end.
+
+(* The 15 edges of K6 in canonical order *)
+Definition k6_edges : list (nat * nat) :=
+  [(0,1); (0,2); (0,3); (0,4); (0,5);
+   (1,2); (1,3); (1,4); (1,5);
+   (2,3); (2,4); (2,5);
+   (3,4); (3,5);
+   (4,5)].
+
+(* Convert a coloring to a natural number by encoding each edge color as a bit *)
+Fixpoint coloring_to_nat_aux (c : coloring) (edges : list (nat * nat)) (pos : nat) : nat :=
+  match edges with
+  | [] => 0
+  | (v1, v2) :: rest =>
+    let bit := color_to_bit (c (v1, v2)) in
+    bit * Nat.pow 2 pos + coloring_to_nat_aux c rest (S pos)
+  end.
+
+Definition coloring_to_nat (c : coloring) : nat :=
+  coloring_to_nat_aux c k6_edges 0.
+
 (* Check a range of colorings *)
 Fixpoint check_coloring_range (start : nat) (count : nat) : bool :=
   match count with
@@ -318,30 +345,226 @@ Proof.
   reflexivity.
 Qed.
 
+(* Helper: 2^n > 0 *)
+Lemma pow2_pos : forall n, 0 < Nat.pow 2 n.
+Proof. induction n; simpl; lia. Qed.
+
+(* Helper: color_to_bit returns 0 or 1 *)
+Lemma color_to_bit_bound : forall col, color_to_bit col <= 1.
+Proof. destruct col; simpl; lia. Qed.
+
+(* Key lemma: coloring_to_nat produces values in valid range *)
+Lemma coloring_to_nat_aux_bound : forall c edges pos,
+  coloring_to_nat_aux c edges pos < Nat.pow 2 (pos + length edges).
+Proof.
+  intros c edges. revert c.
+  induction edges as [|[v1 v2] rest IH]; intros c pos; simpl.
+  - rewrite Nat.add_0_r. apply pow2_pos.
+  - specialize (IH c (S pos)).
+    assert (Hbit: color_to_bit (c (v1, v2)) <= 1) by apply color_to_bit_bound.
+    assert (Hpow: Nat.pow 2 pos > 0) by apply pow2_pos.
+    assert (Heq: S pos + length rest = S (pos + length rest)) by lia.
+    rewrite Heq in IH.
+    assert (Hpow2: Nat.pow 2 (S (pos + length rest)) = 2 * Nat.pow 2 (pos + length rest)).
+    { simpl. lia. }
+    rewrite Hpow2 in IH.
+    destruct (color_to_bit (c (v1, v2))); simpl in *; lia.
+Qed.
+
+Lemma coloring_to_nat_bound : forall c,
+  coloring_to_nat c < 32768.
+Proof.
+  intro c.
+  unfold coloring_to_nat.
+  assert (H := coloring_to_nat_aux_bound c k6_edges 0).
+  unfold k6_edges in H. simpl in H. exact H.
+Qed.
+
+(* The critical lemma: check_coloring_range returns true means all colorings in range have mono triangle *)
+Lemma check_range_implies_mono : forall start count n,
+  check_coloring_range start count = true ->
+  start <= n < start + count ->
+  coloring_has_mono_triangle n = true.
+Proof.
+  intros start count.
+  revert start.
+  induction count; intros start n Hcheck Hrange.
+  - lia.
+  - simpl in Hcheck.
+    destruct (coloring_has_mono_triangle start) eqn:E.
+    + destruct (Nat.eq_dec n start).
+      * subst. exact E.
+      * apply IHcount with (start := S start); try lia.
+        exact Hcheck.
+    + discriminate.
+Qed.
+
+(* For any n < 32768, the corresponding coloring has a monochromatic triangle *)
+Lemma all_nats_have_mono : forall n,
+  n < 32768 ->
+  coloring_has_mono_triangle n = true.
+Proof.
+  intros n Hn.
+  apply check_range_implies_mono with (start := 0) (count := 32768).
+  - exact all_colorings_have_mono_triangle.
+  - lia.
+Qed.
+
+(* Two colorings that agree on all K6 edges give same result for has_monochromatic_triangle *)
+Definition colorings_agree_on_k6 (c1 c2 : coloring) : Prop :=
+  forall v1 v2, v1 < 6 -> v2 < 6 -> v1 <> v2 -> c1 (v1, v2) = c2 (v1, v2).
+
+Lemma edge_index_correct : forall v1 v2,
+  v1 < 6 -> v2 < 6 -> v1 < v2 ->
+  edge_index v1 v2 < 15.
+Proof.
+  intros v1 v2 H1 H2 Hlt.
+  unfold edge_index.
+  destruct (Nat.ltb v1 v2) eqn:E.
+  - destruct v1, v2; simpl; try lia.
+    all: destruct v2; simpl; try lia.
+    all: destruct v2; simpl; try lia.
+    all: destruct v2; simpl; try lia.
+    all: destruct v2; simpl; try lia.
+    all: destruct v2; simpl; try lia.
+  - apply Nat.ltb_ge in E. lia.
+Qed.
+
+Lemma testbit_pow2 : forall n k,
+  Nat.testbit (Nat.pow 2 k) k = true.
+Proof.
+  intros n k.
+  induction k; simpl.
+  - reflexivity.
+  - rewrite Nat.add_0_r.
+    rewrite Nat.testbit_succ_r_div2.
+    rewrite Nat.pow_succ_r; try lia.
+    rewrite Nat.div_mul; try lia.
+    exact IHk.
+Qed.
+
+(* Key: the triangles in K6 only look at K6 edges *)
+Lemma has_mono_depends_only_on_k6_edges : forall c1 c2,
+  (forall v1 v2, In (v1, v2) k6_edges -> c1 (v1, v2) = c2 (v1, v2)) ->
+  (forall v1 v2, In (v2, v1) k6_edges -> c1 (v1, v2) = c2 (v1, v2)) ->
+  has_monochromatic_triangle (complete_graph 6) c1 =
+  has_monochromatic_triangle (complete_graph 6) c2.
+Proof.
+  intros c1 c2 Hfwd Hrev.
+  unfold has_monochromatic_triangle, complete_graph.
+  simpl.
+  f_equal.
+  apply map_ext.
+  intros [[a b] d].
+  unfold is_triangle, is_monochromatic.
+  simpl.
+  f_equal.
+  assert (Hab: c1 (a, b) = c2 (a, b)).
+  { destruct (Nat.lt_trichotomy a b) as [Hlt|[Heq|Hgt]].
+    - apply Hfwd. unfold k6_edges.
+      destruct a, b; simpl in *; try lia; auto.
+      all: destruct b; simpl in *; try lia; auto.
+      all: destruct b; simpl in *; try lia; auto.
+      all: destruct b; simpl in *; try lia; auto.
+      all: destruct b; simpl in *; try lia; auto.
+    - subst. reflexivity.
+    - apply Hrev. unfold k6_edges.
+      destruct a, b; simpl in *; try lia; auto.
+      all: destruct a; simpl in *; try lia; auto.
+      all: destruct a; simpl in *; try lia; auto.
+      all: destruct a; simpl in *; try lia; auto.
+      all: destruct a; simpl in *; try lia; auto. }
+  assert (Hbd: c1 (b, d) = c2 (b, d)).
+  { destruct (Nat.lt_trichotomy b d) as [Hlt|[Heq|Hgt]].
+    - apply Hfwd. unfold k6_edges.
+      destruct b, d; simpl in *; try lia; auto.
+      all: destruct d; simpl in *; try lia; auto.
+      all: destruct d; simpl in *; try lia; auto.
+      all: destruct d; simpl in *; try lia; auto.
+      all: destruct d; simpl in *; try lia; auto.
+    - subst. reflexivity.
+    - apply Hrev. unfold k6_edges.
+      destruct b, d; simpl in *; try lia; auto.
+      all: destruct b; simpl in *; try lia; auto.
+      all: destruct b; simpl in *; try lia; auto.
+      all: destruct b; simpl in *; try lia; auto.
+      all: destruct b; simpl in *; try lia; auto. }
+  assert (Had: c1 (a, d) = c2 (a, d)).
+  { destruct (Nat.lt_trichotomy a d) as [Hlt|[Heq|Hgt]].
+    - apply Hfwd. unfold k6_edges.
+      destruct a, d; simpl in *; try lia; auto.
+      all: destruct d; simpl in *; try lia; auto.
+      all: destruct d; simpl in *; try lia; auto.
+      all: destruct d; simpl in *; try lia; auto.
+      all: destruct d; simpl in *; try lia; auto.
+    - subst. reflexivity.
+    - apply Hrev. unfold k6_edges.
+      destruct a, d; simpl in *; try lia; auto.
+      all: destruct a; simpl in *; try lia; auto.
+      all: destruct a; simpl in *; try lia; auto.
+      all: destruct a; simpl in *; try lia; auto.
+      all: destruct a; simpl in *; try lia; auto. }
+  rewrite Hab, Hbd, Had.
+  reflexivity.
+Qed.
+
+(* Computational verification that nat_to_coloring (coloring_to_nat c) agrees with c on K6 edges *)
+Lemma nat_coloring_roundtrip_k6 : forall c v1 v2,
+  In (v1, v2) k6_edges ->
+  nat_to_coloring (coloring_to_nat c) (v1, v2) = c (v1, v2).
+Proof.
+  intros c v1 v2 Hin.
+  unfold nat_to_coloring, coloring_to_nat.
+  unfold k6_edges in *.
+  simpl in Hin.
+  repeat match goal with
+  | H: _ \/ _ |- _ => destruct H as [H|H]
+  | H: (_, _) = (_, _) |- _ => inversion H; subst; clear H
+  | H: False |- _ => contradiction
+  end;
+  unfold edge_index, coloring_to_nat_aux, color_to_bit; simpl;
+  destruct (c (0, 1)), (c (0, 2)), (c (0, 3)), (c (0, 4)), (c (0, 5)),
+           (c (1, 2)), (c (1, 3)), (c (1, 4)), (c (1, 5)),
+           (c (2, 3)), (c (2, 4)), (c (2, 5)),
+           (c (3, 4)), (c (3, 5)),
+           (c (4, 5)); reflexivity.
+Qed.
+
+Lemma nat_coloring_roundtrip_k6_rev : forall c v1 v2,
+  In (v2, v1) k6_edges ->
+  nat_to_coloring (coloring_to_nat c) (v1, v2) = c (v1, v2).
+Proof.
+  intros c v1 v2 Hin.
+  unfold nat_to_coloring, coloring_to_nat.
+  unfold k6_edges in *.
+  simpl in Hin.
+  repeat match goal with
+  | H: _ \/ _ |- _ => destruct H as [H|H]
+  | H: (_, _) = (_, _) |- _ => inversion H; subst; clear H
+  | H: False |- _ => contradiction
+  end;
+  unfold edge_index, coloring_to_nat_aux, color_to_bit; simpl;
+  destruct (c (0, 1)), (c (0, 2)), (c (0, 3)), (c (0, 4)), (c (0, 5)),
+           (c (1, 2)), (c (1, 3)), (c (1, 4)), (c (1, 5)),
+           (c (2, 3)), (c (2, 4)), (c (2, 5)),
+           (c (3, 4)), (c (3, 5)),
+           (c (4, 5)); reflexivity.
+Qed.
+
 (* Convert the computational result to the theorem we need *)
 Theorem k6_has_monochromatic_triangle :
   forall (c : coloring),
     has_monochromatic_triangle (complete_graph 6) c = true.
 Proof.
   intro c.
-  (* Every coloring corresponds to some natural number < 32768 *)
-  (* We've verified all of them have monochromatic triangles *)
-  (* The proof would map c to its corresponding nat and use all_colorings_have_mono_triangle *)
-  (* This requires showing the correspondence between arbitrary colorings and nat_to_coloring *)
-  
-  (* For a complete proof, we'd need to show:
-     1. Every coloring of K6 corresponds to some n < 32768
-     2. If coloring_has_mono_triangle n = true, then has_monochromatic_triangle (complete_graph 6) c = true
-     
-     Since we've verified all 32768 possibilities computationally, the theorem holds. *)
-  
-  (* The actual proof would be quite technical, involving:
-     - Showing that colorings on finite graphs can be enumerated
-     - Proving that nat_to_coloring is surjective for K6 colorings
-     - Using all_colorings_have_mono_triangle to conclude *)
-  
-  admit.  (* This admit is now justified by our computational verification *)
-Admitted.
+  assert (H := coloring_to_nat_bound c).
+  assert (Hmono := all_nats_have_mono (coloring_to_nat c) H).
+  unfold coloring_has_mono_triangle in Hmono.
+  rewrite <- Hmono.
+  apply has_mono_depends_only_on_k6_edges.
+  - intros v1 v2 Hin. symmetry. apply nat_coloring_roundtrip_k6. exact Hin.
+  - intros v1 v2 Hin. symmetry. apply nat_coloring_roundtrip_k6_rev. exact Hin.
+Qed.
 
 (* Main theorem: R(3,3) = 6 *)
 Theorem ramsey_3_3_equals_6 :
